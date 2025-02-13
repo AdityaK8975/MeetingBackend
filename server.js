@@ -80,11 +80,22 @@ const userSchema = new mongoose.Schema({
   role: { type: String, required: true },
   password: { type: Number, unique: true },
   });
-  
-
-userSchema.plugin(mongooseSequence, { inc_field: 'UserId', start_seq: 1111 });
+  userSchema.plugin(mongooseSequence, { inc_field: 'UserId', start_seq: 1111 });
 userSchema.plugin(mongooseSequence, { inc_field: 'password', start_seq: 1111 });
 const User= mongoose.model("User", userSchema);
+
+  const notificationSchema = new mongoose.Schema({
+    userId: {type:String},
+    type: {type:String},
+    message: {type:String},
+    title:{type:String},
+    meetingId:{type:String},
+    timestamp: { type: Date, default: Date.now, index: { expires: "15d" } },
+    isRead:{type :Boolean,default:false}
+});
+
+
+const  Notification = mongoose.model("Notification", notificationSchema);
 
 // Admin-Only Route (Create Meeting)
 
@@ -103,26 +114,53 @@ console.log(channelName);
 });
 
 
-
 app.get("/token", (req, res) => {
-const channelName = req.query.channel;
-const uid = Math.floor(Math.random() * 10000);
-const role = RtcRole.PUBLISHER;
-const expirationTime = 3600; // 1 hour
-const currentTime = Math.floor(Date.now() / 1000);
-const privilegeExpireTime = currentTime + expirationTime;
+  const { channel, uid } = req.query;
 
-const token = RtcTokenBuilder.buildTokenWithUid(
-    APP_ID,
-    APP_CERTIFICATE,
-    channelName,
-    uid,
-    role,
-    privilegeExpireTime
-);
+  console.log("Token Request Received:", { channel, uid });
 
-res.json({ uid, token,channelName });
+  if (!channel) {
+    console.error("Error: Channel name is missing");
+    return res.status(400).json({ error: "Channel is required" });
+  }
+
+  // Convert uid to number or use 0 (Agora assigns random UID)
+  const numericUid = uid ? parseInt(uid, 10) : 0;
+  if (isNaN(numericUid)) {
+    console.error("Error: Invalid UID");
+    return res.status(400).json({ error: "Invalid UID. Must be a number" });
+  }
+
+  // Ensure Agora credentials are set
+  if (!APP_ID || !APP_CERTIFICATE) {
+    console.error("Error: Agora credentials are missing");
+    return res.status(500).json({ error: "Agora credentials missing" });
+  }
+
+  try {
+    const role = RtcRole.PUBLISHER;
+    const expirationTime = 3600; // 1 hour
+    const currentTime = Math.floor(Date.now() / 1000);
+    const privilegeExpireTime = currentTime + expirationTime;
+
+    const token = RtcTokenBuilder.buildTokenWithUid(
+      APP_ID,
+      APP_CERTIFICATE,
+      channel,
+      numericUid,
+      role,
+      privilegeExpireTime
+    );
+
+    console.log("Generated Token:", { uid: numericUid, token, channel });
+
+    res.json({ uid: numericUid, token, channel });
+  } catch (error) {
+    console.error("Token generation failed:", error);
+    res.status(500).json({ error: "Failed to generate token", details: error.message });
+  }
 });
+
 
 app.post('/api/meetings/store', async (req, res) => {
   try {
@@ -180,7 +218,17 @@ app.post('/api/meetings/store', async (req, res) => {
 
       const savedMeeting = await newMeeting.save();
       
-      io.emit("newMeeting", newMeeting);
+      // io.emit("newMeeting", newMeeting);
+      const notifications = invitedUsers.map((user) => ({
+        userId: String(user.userId), 
+        type: "invitation",
+        message: `You have been invited to a meeting`,
+        title: title,
+        meetingId,
+        isRead: false,
+      }));
+  
+      await Notification.insertMany(notifications);
 
     console.log("🚀 Emitting newMeeting event:", savedMeeting);
    
@@ -229,36 +277,51 @@ app.post('/api/meetings/store', async (req, res) => {
 
     app.put("/api/meetings/cancel/:id", async (req, res) => {
       try {
-        const meetingId = req.params.id;
-        const { cancelReason } = req.body; // Get reason from frontend
-        if (!cancelReason) {
-          return res.status(400).json({ message: "Cancellation reason is required." });
-        }
-        const meeting = await Meeting.findById(meetingId);
-        if (!meeting) {
-          return res.status(404).json({ message: "Meeting not found" });
-      }
-      const invitedEmails = meeting.invitedUsers;
-      
-      
-        const updatedMeeting = await Meeting.findByIdAndUpdate(
-          meetingId,
-          { status: "Canceled",cancelReason },
-          { new: true } // Ensures it returns updated data
-        );
-    
-        if (!updatedMeeting) {
-          return res.status(404).json({ message: "Meeting not found" });
-        }
-    
-        res.json(updatedMeeting); // Send updated meeting back to frontend
-        await sendMeetingCancellationEmail(invitedEmails,updatedMeeting);
+          const meetingId = req.params.id;
+          const { cancelReason } = req.body; 
+  
+          if (!cancelReason) {
+              return res.status(400).json({ message: "Cancellation reason is required." });
+          }
+  
+          const meeting = await Meeting.findById(meetingId);
+          if (!meeting) {
+              return res.status(404).json({ message: "Meeting not found" });
+          }
+  
+          const invitedEmails = meeting.invitedUsers;
+         
+  
+          const updatedMeeting = await Meeting.findByIdAndUpdate(
+              meetingId,
+              { status: "Canceled", cancelReason },
+              { new: true }
+          );
+  
+          if (!updatedMeeting) {
+              return res.status(404).json({ message: "Meeting not found" });
+          }
+  
+          const notifications = invitedEmails.map((user) => ({
+            userId: String(user.userId),
+            type: "cancel",
+            message: `The meeting has been canceled.`,
+            title:meeting.title,
+            meetingId,
+            isRead: false,
+           }));
+       
+           await Notification.insertMany(notifications);
+  
+          res.json(updatedMeeting);
+          await sendMeetingCancellationEmail(invitedEmails, updatedMeeting);
+  
       } catch (error) {
-        console.error("Error canceling meeting:", error);
-        res.status(500).json({ message: "Internal Server Error" });
+          console.error("Error canceling meeting:", error);
+          res.status(500).json({ message: "Internal Server Error" });
       }
-    });
-    
+  });
+  
     
     app.get('/api/users/data', async (req, res) => {
       try {
@@ -308,7 +371,21 @@ app.post('/api/meetings/store', async (req, res) => {
       res.status(500).json({ msg: "Error fetching users" });
     }
   });
-
+  app.get("/user/:userId", async (req, res) => {
+    try {
+      const user = await User.findOne({ UserId: req.params.userId });
+      if (!user) return res.status(404).json({ error: "User not found" });
+  
+      res.json({
+        firstName: user.firstName,
+        lastName: user.lastName,
+      });
+    } catch (error) {
+      console.error(error);
+      res.status(500).json({ error: "Server error" });
+    }
+  });
+  
 app.get("/host/:hostId", async (req, res) => {
     try {
       const { hostId } = req.params; // Extract hostId from request params
@@ -368,6 +445,35 @@ app.get("/meeting-details/:meetingId", async (req, res) => {
     } catch (error) {
       console.error("Error updating response:", error);
       res.status(500).json({ message: "Server error" });
+    }
+  });
+  app.get("/api/notifications/:userId", async (req, res) => {
+    try {
+      const { userId } = req.params;
+  
+      console.log(`📨 Fetching notifications for userId: ${userId}`);
+      const notifications = await Notification.find({ userId }).sort({ timestamp: -1 });
+  
+      if (notifications.length === 0) {
+        return res.status(404).json({ message: "No notifications found for this user." });
+      }
+  
+      console.log("✅ Notifications fetched successfully:", notifications);
+      res.status(200).json(notifications);
+      
+    } catch (error) {
+      console.error("❌ Error fetching notifications:", error);
+      res.status(500).json({ message: "Server error", error: error.message });
+    }
+  });
+  
+  
+  app.patch("/api/notifications/mark-as-read/:id", async (req, res) => {
+    try {
+        await Notification.findByIdAndUpdate(req.params.id, { isRead: true });
+        res.json({ message: "Notification marked as read" });
+    } catch (error) {
+        res.status(500).json({ message: "Error updating notification", error: error.message });
     }
   });
   

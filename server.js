@@ -12,6 +12,7 @@ const app = express();
 const server = http.createServer(app);
 const { sendEmailNotification,sendMeetingCancellationEmail } = require("./utils/emailService");
 const { type } = require("os");
+const { log } = require("console");
 
 // Configure CORS middleware with specific options
 app.use(cors({
@@ -114,51 +115,27 @@ console.log(channelName);
 });
 
 
-app.get("/token", (req, res) => {
-  const { channel, uid } = req.query;
-
-  console.log("Token Request Received:", { channel, uid });
-
-  if (!channel) {
-    console.error("Error: Channel name is missing");
-    return res.status(400).json({ error: "Channel is required" });
+app.post("/token", (req, res) => {
+  const { roomId, uid } = req.body; 
+  
+  if (!roomId || !uid) {
+    return res.status(400).json({ error: "roomId and uid are required" });
   }
+  const role = RtcRole.PUBLISHER;
+  const expirationTime = 3600; // 1 hour
+  const currentTime = Math.floor(Date.now() / 1000);
+  const privilegeExpireTime = currentTime + expirationTime;
 
-  // Convert uid to number or use 0 (Agora assigns random UID)
-  const numericUid = uid ? parseInt(uid, 10) : 0;
-  if (isNaN(numericUid)) {
-    console.error("Error: Invalid UID");
-    return res.status(400).json({ error: "Invalid UID. Must be a number" });
-  }
-
-  // Ensure Agora credentials are set
-  if (!APP_ID || !APP_CERTIFICATE) {
-    console.error("Error: Agora credentials are missing");
-    return res.status(500).json({ error: "Agora credentials missing" });
-  }
-
-  try {
-    const role = RtcRole.PUBLISHER;
-    const expirationTime = 3600; // 1 hour
-    const currentTime = Math.floor(Date.now() / 1000);
-    const privilegeExpireTime = currentTime + expirationTime;
-
-    const token = RtcTokenBuilder.buildTokenWithUid(
+  const token = RtcTokenBuilder.buildTokenWithUid(
       APP_ID,
       APP_CERTIFICATE,
-      channel,
-      numericUid,
+      roomId,
+      uid,
       role,
       privilegeExpireTime
-    );
+  );
 
-    console.log("Generated Token:", { uid: numericUid, token, channel });
-
-    res.json({ uid: numericUid, token, channel });
-  } catch (error) {
-    console.error("Token generation failed:", error);
-    res.status(500).json({ error: "Failed to generate token", details: error.message });
-  }
+  res.json({ uid, token, roomId });
 });
 
 
@@ -302,16 +279,16 @@ app.post('/api/meetings/store', async (req, res) => {
               return res.status(404).json({ message: "Meeting not found" });
           }
   
-          const notifications = invitedEmails.map((user) => ({
-            userId: String(user.userId),
-            type: "cancel",
-            message: `The meeting has been canceled.`,
-            title:meeting.title,
-            meetingId,
-            isRead: false,
-           }));
-       
-           await Notification.insertMany(notifications);
+              const notifications = invitedEmails.map(userId => ({
+                  userId,
+                  message: `❌ Meeting with ID ${meetingId} has been canceled. Reason: ${cancelReason}`,
+                  meetingId,
+                  timestamp: new Date(),
+                  isRead: false
+              }));
+  
+              await Notification.insertMany(notifications); // Save notifications
+      
   
           res.json(updatedMeeting);
           await sendMeetingCancellationEmail(invitedEmails, updatedMeeting);

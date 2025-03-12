@@ -2,13 +2,7 @@
 // import { getMessaging, getToken, onMessage } from "firebase/messaging";
 
 // const firebaseConfig = {
-//     apiKey: "AIzaSyC1ABpOmoZXa20qMlID88QSyA1FOr4dV6c",
-//     authDomain: "samarthmeet-ee38d.firebaseapp.com",
-//     projectId: "samarthmeet-ee38d",
-//     storageBucket: "samarthmeet-ee38d.firebasestorage.app",
-//     messagingSenderId: "981549354650",
-//     appId: "1:981549354650:web:9a1db207116ceff2d2d923",
-//     measurementId: "G-XWGXQHCLN1"
+
 // };
 
 // const app = initializeApp(firebaseConfig);

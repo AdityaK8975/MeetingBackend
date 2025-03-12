@@ -100,7 +100,7 @@ const  Notification = mongoose.model("Notification", notificationSchema);
 
 // Admin-Only Route (Create Meeting)
 
-mongoose.connect("mongodb+srv://adityakatare:aditya8975@cluster0.tbwxq.mongodb.net/new?retryWrites=true&w=majority&appName=Cluster0", {
+mongoose.connect("", {
     useNewUrlParser: true,
     useUnifiedTopology: true,
   }).then(() => console.log("MongoDB Connected"))
